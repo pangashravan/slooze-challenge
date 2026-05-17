@@ -1,0 +1,21 @@
+# Slooze Data Engineering Challenge — Python Dependencies
+# Install: pip install -r requirements.txt
+
+# ── HTTP + Scraping ────────────────────────────────────────────────────────────
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2                  # Fast BS4 parser
+urllib3==2.2.1
+
+# ── Data processing ────────────────────────────────────────────────────────────
+pandas==2.2.2
+numpy==1.26.4
+
+# ── Visualisation ──────────────────────────────────────────────────────────────
+matplotlib==3.9.0
+seaborn==0.13.2
+wordcloud==1.9.3
+
+# ── Notebook (optional) ────────────────────────────────────────────────────────
+jupyter==1.0.0
+ipykernel==6.29.4
