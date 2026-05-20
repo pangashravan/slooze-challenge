@@ -23,7 +23,16 @@ import logging
 import os
 import sys
 
-import pandas as pd
+try:
+    import pandas as pd
+except ModuleNotFoundError as exc:
+    missing_package = exc.name or "required package"
+    print(
+        f"Missing dependency: {missing_package}. "
+        "Install project dependencies with `python -m pip install -r requirements.txt`.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 logging.basicConfig(
     level=logging.INFO,
