@@ -19,6 +19,12 @@ import os
 import re
 from collections import Counter
 
+MPLCONFIGDIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "data", "processed", ".matplotlib")
+)
+os.makedirs(MPLCONFIGDIR, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
+
 import matplotlib
 matplotlib.use("Agg")   # non-interactive backend — no display required
 import matplotlib.pyplot as plt
@@ -84,20 +90,20 @@ def plot_price_distribution(df: pd.DataFrame):
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     # Raw scale
-    sns.boxplot(data=price_df, x="category", y="price_mid_inr",
-                ax=axes[0], palette="pastel", showfliers=False)
+    sns.boxplot(data=price_df, x="category", y="price_mid_inr", hue="category",
+                ax=axes[0], palette="pastel", showfliers=False, legend=False)
     axes[0].set_title("Price Distribution by Category (Linear)")
     axes[0].set_xlabel("Category")
-    axes[0].set_ylabel("Price (₹)")
+    axes[0].set_ylabel("Price (INR)")
     axes[0].tick_params(axis="x", rotation=30)
 
     # Log scale (better for B2B where prices span orders of magnitude)
     price_df["log_price"] = np.log10(price_df["price_mid_inr"])
-    sns.violinplot(data=price_df, x="category", y="log_price",
-                   ax=axes[1], palette="pastel", inner="quartile")
-    axes[1].set_title("Price Distribution (Log₁₀ Scale)")
+    sns.violinplot(data=price_df, x="category", y="log_price", hue="category",
+                   ax=axes[1], palette="pastel", inner="quartile", legend=False)
+    axes[1].set_title("Price Distribution (Log10 Scale)")
     axes[1].set_xlabel("Category")
-    axes[1].set_ylabel("log₁₀(Price ₹)")
+    axes[1].set_ylabel("log10(Price INR)")
     axes[1].tick_params(axis="x", rotation=30)
 
     fig.suptitle("Price Analysis Across Categories", fontsize=15, fontweight="bold")
@@ -112,10 +118,10 @@ def plot_price_tier_breakdown(df: pd.DataFrame):
         return
 
     def tier(p):
-        if p < 500:    return "Budget (<₹500)"
-        if p < 5000:   return "Mid (₹500–5k)"
-        if p < 50000:  return "Premium (₹5k–50k)"
-        return "Enterprise (>₹50k)"
+        if p < 500:    return "Budget (<INR 500)"
+        if p < 5000:   return "Mid (INR 500-5k)"
+        if p < 50000:  return "Premium (INR 5k-50k)"
+        return "Enterprise (>INR 50k)"
 
     price_df["tier"] = price_df["price_mid_inr"].apply(tier)
 
