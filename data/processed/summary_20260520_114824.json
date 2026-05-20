@@ -1,0 +1,24 @@
+{
+  "run_timestamp": "20260520_114824",
+  "total_records": 400,
+  "categories": {
+    "electronics": 80,
+    "industrial_machinery": 80,
+    "textiles": 80,
+    "agriculture_equipment": 80,
+    "chemicals": 80
+  },
+  "price_coverage": "85.2%",
+  "location_coverage": "91.5%",
+  "unique_suppliers": 134,
+  "states_covered": [
+    "Uttar Pradesh",
+    "Delhi",
+    "Gujarat",
+    "Maharashtra",
+    "Tamil Nadu",
+    "Karnataka",
+    "West Bengal",
+    "Rajasthan"
+  ]
+}
