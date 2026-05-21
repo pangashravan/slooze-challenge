@@ -100,7 +100,12 @@ class BaseScraper(ABC):
             elif response.status_code == 429:
                 self.logger.warning("Rate limited (429) — sleeping 30s before retry")
                 time.sleep(30)
-                return self.fetch(url)   # one manual retry after long pause
+                response = self.session.get(
+                    url,
+                    headers=self._random_headers(),
+                    timeout=REQUEST_TIMEOUT,
+                )
+                return response if response.status_code == 200 else None
             else:
                 self.logger.warning(f"HTTP {response.status_code} for {url}")
                 return None
