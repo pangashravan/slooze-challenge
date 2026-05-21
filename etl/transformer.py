@@ -10,6 +10,7 @@ Responsibilities:
 import json
 import logging
 import os
+import shutil
 from datetime import datetime
 
 import pandas as pd
@@ -65,7 +66,12 @@ def transform_and_save(df: pd.DataFrame) -> str:
 
     # Also save a static name for easy reference in EDA
     static_path = os.path.join(PROCESSED_DATA_DIR, "products_latest.csv")
-    df.to_csv(static_path, index=False, encoding="utf-8-sig")
+    if os.path.exists(static_path):
+        os.remove(static_path)
+    try:
+        os.link(csv_path, static_path)
+    except OSError:
+        shutil.copyfile(csv_path, static_path)
 
     _save_summary(df, run_ts)
 
