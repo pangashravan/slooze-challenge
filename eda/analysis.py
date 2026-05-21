@@ -28,7 +28,6 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 import matplotlib
 matplotlib.use("Agg")   # non-interactive backend — no display required
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -42,6 +41,27 @@ CHARTS_DIR = os.path.join(
     os.path.dirname(__file__), "..", "data", "processed", "charts"
 )
 COLORS = sns.color_palette("muted", 10)
+WORD_RE = re.compile(r"[a-zA-Z]{3,}")
+LONG_WORD_RE = re.compile(r"[a-zA-Z]{4,}")
+WORDCLOUD_STOPWORDS = frozenset({
+    "and", "or", "for", "the", "with", "of", "in",
+    "a", "an", "to", "is", "are", "at", "by",
+})
+BAR_STOPWORDS = WORDCLOUD_STOPWORDS | frozenset({
+    "type", "grade", "size", "model", "new", "used", "per",
+})
+
+
+def _keyword_counts(names: pd.Series, pattern: re.Pattern, stopwords: frozenset[str]) -> Counter:
+    """Tokenize product names without building one large intermediate string."""
+    counts = Counter()
+    for name in names.dropna():
+        counts.update(
+            token
+            for token in pattern.findall(str(name).lower())
+            if token not in stopwords
+        )
+    return counts
 
 
 def _save(fig, name: str):
@@ -81,7 +101,7 @@ def plot_category_distribution(df: pd.DataFrame):
 
 def plot_price_distribution(df: pd.DataFrame):
     """Box plots of mid-price by category (log scale for wide range)."""
-    price_df = df[df["price_mid_inr"].notna() & (df["price_mid_inr"] > 0)].copy()
+    price_df = df.loc[df["price_mid_inr"].notna() & (df["price_mid_inr"] > 0)]
 
     if price_df.empty:
         logger.warning("No price data available for price distribution plot.")
@@ -98,8 +118,8 @@ def plot_price_distribution(df: pd.DataFrame):
     axes[0].tick_params(axis="x", rotation=30)
 
     # Log scale (better for B2B where prices span orders of magnitude)
-    price_df["log_price"] = np.log10(price_df["price_mid_inr"])
-    sns.violinplot(data=price_df, x="category", y="log_price", hue="category",
+    log_price_df = price_df.assign(log_price=np.log10(price_df["price_mid_inr"]))
+    sns.violinplot(data=log_price_df, x="category", y="log_price", hue="category",
                    ax=axes[1], palette="pastel", inner="quartile", legend=False)
     axes[1].set_title("Price Distribution (Log10 Scale)")
     axes[1].set_xlabel("Category")
@@ -113,19 +133,23 @@ def plot_price_distribution(df: pd.DataFrame):
 
 def plot_price_tier_breakdown(df: pd.DataFrame):
     """Stacked bar: price tier (budget / mid / premium) per category."""
-    price_df = df[df["price_mid_inr"].notna()].copy()
+    price_df = df.loc[df["price_mid_inr"].notna()]
     if price_df.empty:
         return
 
-    def tier(p):
-        if p < 500:    return "Budget (<INR 500)"
-        if p < 5000:   return "Mid (INR 500-5k)"
-        if p < 50000:  return "Premium (INR 5k-50k)"
-        return "Enterprise (>INR 50k)"
+    tiers = pd.cut(
+        price_df["price_mid_inr"],
+        bins=[-np.inf, 500, 5000, 50000, np.inf],
+        labels=[
+            "Budget (<INR 500)",
+            "Mid (INR 500-5k)",
+            "Premium (INR 5k-50k)",
+            "Enterprise (>INR 50k)",
+        ],
+        right=False,
+    )
 
-    price_df["tier"] = price_df["price_mid_inr"].apply(tier)
-
-    pivot = price_df.groupby(["category", "tier"]).size().unstack(fill_value=0)
+    pivot = price_df.groupby([price_df["category"], tiers], observed=False).size().unstack(fill_value=0)
     pivot_pct = pivot.div(pivot.sum(axis=1), axis=0) * 100
 
     fig, ax = plt.subplots(figsize=(11, 6))
@@ -188,20 +212,9 @@ def plot_keyword_wordcloud(df: pd.DataFrame):
     if "product_name" not in df.columns:
         return
 
-    STOPWORDS = {
-        "and", "or", "for", "the", "with", "of", "in",
-        "a", "an", "to", "is", "are", "at", "by",
-    }
-
-    all_words = []
-    for name in df["product_name"].dropna():
-        tokens = re.findall(r"[a-zA-Z]{3,}", name.lower())
-        all_words.extend([t for t in tokens if t not in STOPWORDS])
-
-    if not all_words:
+    word_freq = _keyword_counts(df["product_name"], WORD_RE, WORDCLOUD_STOPWORDS)
+    if not word_freq:
         return
-
-    word_freq = Counter(all_words)
 
     wc = WordCloud(
         width=900, height=450,
@@ -222,18 +235,10 @@ def plot_top_keywords_bar(df: pd.DataFrame):
     if "product_name" not in df.columns:
         return
 
-    STOPWORDS = {
-        "and", "or", "for", "the", "with", "of", "in",
-        "a", "an", "to", "is", "are", "at", "by", "type",
-        "grade", "size", "model", "new", "used", "per",
-    }
+    top20 = _keyword_counts(df["product_name"], LONG_WORD_RE, BAR_STOPWORDS).most_common(20)
+    if not top20:
+        return
 
-    words = []
-    for name in df["product_name"].dropna():
-        tokens = re.findall(r"[a-zA-Z]{4,}", name.lower())
-        words.extend([t for t in tokens if t not in STOPWORDS])
-
-    top20 = Counter(words).most_common(20)
     kw_df = pd.DataFrame(top20, columns=["keyword", "count"])
 
     fig, ax = plt.subplots(figsize=(10, 7))
