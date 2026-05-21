@@ -15,10 +15,13 @@ Output: pd.DataFrame (clean, typed, deduplicated)
 import logging
 import re
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger("ETL.Cleaner")
+
+SPACE_RE = re.compile(r"\s+")
+NON_NUMERIC_RE = re.compile(r"[^\d.]")
 
 
 # ── Field-level cleaning helpers ───────────────────────────────────────────────
@@ -27,13 +30,19 @@ def _clean_string(val) -> str | None:
     """Strip whitespace, collapse internal spaces, return None if empty."""
     if pd.isna(val) or val is None:
         return None
-    s = re.sub(r"\s+", " ", str(val)).strip()
+    s = SPACE_RE.sub(" ", str(val)).strip()
     return s if s else None
 
 
-def _title_case(val) -> str | None:
-    s = _clean_string(val)
-    return s.title() if s else None
+def _clean_string_series(series: pd.Series, *, title: bool = False) -> pd.Series:
+    """Vectorized whitespace cleanup with empty strings normalized to NA."""
+    cleaned = (
+        series.astype("string")
+        .str.replace(SPACE_RE, " ", regex=True)
+        .str.strip()
+        .replace("", pd.NA)
+    )
+    return cleaned.str.title() if title else cleaned
 
 
 def _parse_numeric(val) -> float | None:
@@ -46,11 +55,23 @@ def _parse_numeric(val) -> float | None:
     try:
         return float(val)
     except (ValueError, TypeError):
-        clean = re.sub(r"[^\d.]", "", str(val))
+        clean = NON_NUMERIC_RE.sub("", str(val))
         try:
             return float(clean) if clean else None
         except ValueError:
             return None
+
+
+def _parse_numeric_series(series: pd.Series) -> pd.Series:
+    """Parse numeric values with a fast vectorized path before regex cleanup."""
+    numeric = pd.to_numeric(series, errors="coerce")
+    missing = numeric.isna() & series.notna()
+    if missing.any():
+        numeric.loc[missing] = pd.to_numeric(
+            series.loc[missing].astype("string").str.replace(NON_NUMERIC_RE, "", regex=True),
+            errors="coerce",
+        )
+    return numeric
 
 
 # ── Main cleaner ───────────────────────────────────────────────────────────────
@@ -83,17 +104,17 @@ def clean(raw_data: list[dict]) -> pd.DataFrame:
                    "price_unit", "min_order_qty", "supplier_rating"]
     for col in string_cols:
         if col in df.columns:
-            df[col] = df[col].apply(_clean_string)
+            df[col] = _clean_string_series(df[col])
 
     # Title-case location fields
     for col in ["supplier_city", "supplier_state"]:
         if col in df.columns:
-            df[col] = df[col].apply(_title_case)
+            df[col] = _clean_string_series(df[col], title=True)
 
     # ── Step 3: Numeric casting ────────────────────────────────────────────────
     for col in ["price_min_inr", "price_max_inr"]:
         if col in df.columns:
-            df[col] = df[col].apply(_parse_numeric)
+            df[col] = _parse_numeric_series(df[col])
 
     # ── Step 4: Derived columns ────────────────────────────────────────────────
     # Mid-price for analysis where min==max is fine
@@ -104,9 +125,9 @@ def clean(raw_data: list[dict]) -> pd.DataFrame:
         )
 
     # Price range flag
-    df["has_price"]     = df["price_mid_inr"].notna()
-    df["has_location"]  = df["supplier_city"].notna()
-    df["has_supplier"]  = df["supplier_name"].notna()
+    df["has_price"] = df.get("price_mid_inr", pd.Series(index=df.index)).notna()
+    df["has_location"] = df.get("supplier_city", pd.Series(index=df.index)).notna()
+    df["has_supplier"] = df.get("supplier_name", pd.Series(index=df.index)).notna()
 
     # ── Step 5: Timestamp ──────────────────────────────────────────────────────
     if "scraped_at" in df.columns:
@@ -121,9 +142,9 @@ def clean(raw_data: list[dict]) -> pd.DataFrame:
 def _log_quality_report(df: pd.DataFrame):
     """Log completeness % for each column."""
     logger.info("── Data Quality Report ──────────────────────────")
-    for col in df.columns:
-        total    = len(df)
-        missing  = df[col].isna().sum()
+    total = len(df)
+    missing_counts = df.isna().sum()
+    for col, missing in missing_counts.items():
         complete = round((1 - missing / total) * 100, 1) if total else 0
         logger.info(f"  {col:<25} {complete:>5.1f}% complete  ({missing} nulls)")
     logger.info("────────────────────────────────────────────────")
