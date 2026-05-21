@@ -25,6 +25,24 @@ from scraper.config import (
     CATEGORIES, MAX_PAGES_PER_CATEGORY, RAW_DATA_DIR,
 )
 
+PRICE_CLEAN_RE = re.compile(r"[\u20b9,]")
+NUMBER_RE = re.compile(r"[\d]+(?:\.\d+)?")
+UNIT_RE = re.compile(r"/\s*(.+)$")
+CARD_SELECTORS = (
+    "div.productcart",
+    "div.product-unit",
+    "div.srpPrdct",
+    "li.product-list-item",
+)
+FIELD_SELECTORS = {
+    "name": ("h2.pname", ".prd-name", "h3.pname", ".pname"),
+    "price": (".price-unit", ".prc", ".price"),
+    "supplier": (".companyname", ".sup-name", ".company-name"),
+    "location": (".locationspan", ".lcname", ".location"),
+    "moq": (".moqspan", ".punit", ".moq"),
+    "rating": (".rating-count", ".rat-num"),
+}
+
 
 class IndiaMartScraper(BaseScraper):
     """
@@ -65,17 +83,8 @@ class IndiaMartScraper(BaseScraper):
         products = []
         timestamp = datetime.now(timezone.utc).isoformat()
 
-        # IndiaMART uses multiple possible class names across different page types
-        # We try a hierarchy of selectors for robustness
-        card_selectors = [
-            "div.productcart",
-            "div.product-unit",
-            "div.srpPrdct",
-            "li.product-list-item",
-        ]
-
         cards = []
-        for selector in card_selectors:
+        for selector in CARD_SELECTORS:
             cards = soup.select(selector)
             if cards:
                 self.logger.info(f"Found {len(cards)} cards with selector '{selector}'")
@@ -97,50 +106,37 @@ class IndiaMartScraper(BaseScraper):
         self.logger.info(f"Parsed {len(products)} products from page (category={category})")
         return products
 
+    @staticmethod
+    def _first_match(card, selectors):
+        for selector in selectors:
+            found = card.select_one(selector)
+            if found is not None:
+                return found
+        return None
+
     def _extract_card(self, card, category: str, timestamp: str) -> dict:
         """Extract all fields from a single product card."""
 
         # ── Product name ───────────────────────────────────────────────────────
-        name_el = (
-            card.select_one("h2.pname") or
-            card.select_one(".prd-name") or
-            card.select_one("h3.pname") or
-            card.select_one(".pname")
-        )
+        name_el = self._first_match(card, FIELD_SELECTORS["name"])
         product_name = name_el.get_text(strip=True) if name_el else None
 
         # ── Price ──────────────────────────────────────────────────────────────
-        price_el = (
-            card.select_one(".price-unit") or
-            card.select_one(".prc") or
-            card.select_one(".price")
-        )
+        price_el = self._first_match(card, FIELD_SELECTORS["price"])
         raw_price = price_el.get_text(strip=True) if price_el else ""
         price_min, price_max, price_unit = self._parse_price(raw_price)
 
         # ── Supplier info ──────────────────────────────────────────────────────
-        supplier_el = (
-            card.select_one(".companyname") or
-            card.select_one(".sup-name") or
-            card.select_one(".company-name")
-        )
+        supplier_el = self._first_match(card, FIELD_SELECTORS["supplier"])
         supplier_name = supplier_el.get_text(strip=True) if supplier_el else None
 
         # ── Location ───────────────────────────────────────────────────────────
-        location_el = (
-            card.select_one(".locationspan") or
-            card.select_one(".lcname") or
-            card.select_one(".location")
-        )
+        location_el = self._first_match(card, FIELD_SELECTORS["location"])
         raw_location = location_el.get_text(strip=True) if location_el else ""
         city, state = self._parse_location(raw_location)
 
         # ── Minimum Order Quantity ─────────────────────────────────────────────
-        moq_el = (
-            card.select_one(".moqspan") or
-            card.select_one(".punit") or
-            card.select_one(".moq")
-        )
+        moq_el = self._first_match(card, FIELD_SELECTORS["moq"])
         moq = moq_el.get_text(strip=True) if moq_el else None
 
         # ── Product URL ────────────────────────────────────────────────────────
@@ -150,7 +146,7 @@ class IndiaMartScraper(BaseScraper):
             product_url = f"https://www.indiamart.com{product_url}"
 
         # ── Rating ────────────────────────────────────────────────────────────
-        rating_el = card.select_one(".rating-count") or card.select_one(".rat-num")
+        rating_el = self._first_match(card, FIELD_SELECTORS["rating"])
         rating = rating_el.get_text(strip=True) if rating_el else None
 
         return {
@@ -184,14 +180,14 @@ class IndiaMartScraper(BaseScraper):
             return None, None, None
 
         # Remove ₹ and commas
-        clean = re.sub(r"[₹,]", "", raw)
+        clean = PRICE_CLEAN_RE.sub("", raw)
 
         # Extract numbers
-        numbers = re.findall(r"[\d]+(?:\.\d+)?", clean)
+        numbers = NUMBER_RE.findall(clean)
         nums = [float(n) for n in numbers] if numbers else []
 
         # Extract unit (after last /)
-        unit_match = re.search(r"/\s*(.+)$", raw.strip())
+        unit_match = UNIT_RE.search(raw.strip())
         unit = unit_match.group(1).strip() if unit_match else None
 
         if len(nums) == 0:
@@ -257,15 +253,17 @@ class IndiaMartScraper(BaseScraper):
     def run(self) -> list[dict]:
         """Scrape all configured categories. Returns combined product list."""
         all_data = []
+        categories = tuple(CATEGORIES.items())
+        last_category = categories[-1][0] if categories else None
 
-        for category, url in CATEGORIES.items():
+        for category, url in categories:
             self.logger.info(f"━━━ Starting category: {category} ━━━")
             products = self.scrape_category(category, url)
             self._save_raw(category, products)
             all_data.extend(products)
 
             # Longer pause between categories
-            if category != list(CATEGORIES.keys())[-1]:
+            if category != last_category:
                 self.logger.info("Category done — waiting before next…")
                 time_wait = 8 + random.uniform(0, 4)
                 import time
